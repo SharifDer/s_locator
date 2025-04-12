@@ -1,0 +1,132 @@
+name: Deploy Test User Profile Endpoint
+
+on:
+  push:
+    branches: [ test-user-profile-endpoint ]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'Manual build and deploy'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+        fetch-depth: 0
+
+    - name: Checkout correct branch for my_middle_API submodule
+      run: |
+        cd my_middle_API
+        git fetch origin test-user-profile-endpoint
+        git checkout test-user-profile-endpoint
+        git pull origin test-user-profile-endpoint
+        cd ..
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install tox tox-gh-actions
+
+    - name: Test with tox
+      env:
+        DEV_SECRETS_GMAP: ${{ secrets.DEV_SECRETS_GMAP }}
+        DEV_SECRETS_FIREBASE: ${{ secrets.DEV_SECRETS_FIREBASE }}
+      run: tox
+
+    - name: Deploy to VPS
+      uses: appleboy/ssh-action@master
+      env:
+        DEV_FIREBASE_SA: ${{ secrets.DEV_FIREBASE_SA }}
+        DEV_SECRETS_GMAP: ${{ secrets.DEV_SECRETS_GMAP }}
+        DEV_SECRETS_FIREBASE: ${{ secrets.DEV_SECRETS_FIREBASE }}
+        FRONTEND_ENV: ${{ secrets.FRONTEND_ENV }}
+        DEV_SECRET_DATABASE_ENV: ${{ secrets.DEV_SECRET_DATABASE_ENV }}
+        DEV_GCLOUD_CONSOLE_SA: ${{ secrets.DEV_GCLOUD_CONSOLE_SA }}
+        DEV_SECRET_STRIPE: ${{ secrets.DEV_SECRET_STRIPE }}
+      with:
+        host: '37.27.195.216'
+        username: ${{ secrets.VPS_USERNAME }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        envs: DEV_FIREBASE_SA,DEV_SECRETS_GMAP,DEV_SECRETS_FIREBASE,FRONTEND_ENV,DEV_SECRET_DATABASE_ENV,DEV_GCLOUD_CONSOLE_SA,DEV_SECRET_STRIPE
+        script: |
+          set -x
+          set -e
+
+          echo "Starting deployment for test-user-profile-endpoint branch..."
+
+          cd ../../../../..
+          if [ -d "s_locator" ]; then
+            cd s_locator
+            docker compose down
+            cd ..
+            rm -rf s_locator
+          fi
+
+          git config --global user.email "ci@example.com"
+          git config --global user.name "Github actions"
+
+          git clone --recursive https://github.com/SharifDer/s_locator.git &&
+          cd s_locator &&
+          git submodule update --remote --recursive
+
+          # Checkout specific branches for submodules
+          cd FrontEnd
+          git checkout dev
+          git pull origin dev
+          cd ..
+
+          cd my_middle_API
+          git checkout test-user-profile-endpoint
+          git pull origin test-user-profile-endpoint
+          cd ..
+
+          mkdir -p my_middle_API/secrets
+          mkdir -p storage/secrets
+
+          echo '${{ secrets.DEV_FIREBASE_SA }}' > my_middle_API/secrets/secret_dev-s-locator-SA.json
+          echo '${{ secrets.DEV_SECRETS_GMAP }}' > my_middle_API/secrets/secrets_gmap.json
+          echo '${{ secrets.DEV_SECRETS_FIREBASE }}' > my_middle_API/secrets/secrets_firebase.json
+          echo '${{ secrets.DEV_SECRET_DATABASE_ENV }}' > storage/secrets/secrets_database.env
+          echo '${{ secrets.FRONTEND_ENV }}' > FrontEnd/.env
+          echo '${{ secrets.DEV_GCLOUD_CONSOLE_SA }}' > my_middle_API/secrets/weighty-gasket-437422-h6-a9caa84da98d.json
+          echo '${{ secrets.DEV_SECRET_STRIPE }}' > my_middle_API/secrets/secret_stripe.json
+
+          sed -i 's|"REACT_APP_API_URL": "http://localhost:8000/fastapi"|"REACT_APP_API_URL": "http://37.27.195.216:8000/fastapi"|g' FrontEnd/src/urls.json
+          sed -i 's|enable_CORS_url: str = "http://localhost:3000"|enable_CORS_url: str = "http://37.27.195.216:3000"|g' my_middle_API/config_factory.py
+          sed -i 's|uvicorn.run(app, host="localhost", port=8000)|uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)|g' my_middle_API/run_apps.py
+
+          apt-get update && apt-get install -y jq
+
+          touch /backup.sh
+          cp ./backup.sh /backup.sh
+          chmod 777 backup_setup.sh
+          ./backup_setup.sh
+
+          docker compose build
+          docker compose up -d
+
+          FRONTEND_CONTAINER_ID=$(docker ps | grep frontend | awk '{print $1}')
+
+          docker exec $FRONTEND_CONTAINER_ID bash -c "
+            echo 'deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list &&
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - &&
+            apt-get update &&
+            apt-get install -y google-cloud-sdk &&
+            mkdir -p dist/data/population_json_files/ &&
+            gsutil -m cp -r gs://s-locator/misc/population_json_files dist/data/population_json_files/
+          "
+
+          echo "Deployment for test-user-profile-endpoint branch completed."
