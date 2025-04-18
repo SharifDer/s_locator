@@ -2,7 +2,7 @@ name: Deploy Test User Profile Endpoint
 
 on:
   push:
-    branches: [ test-user-profile-endpoint ]
+    branches: [ Auth_test ]
   workflow_dispatch:
     inputs:
       reason:
@@ -25,9 +25,9 @@ jobs:
     - name: Checkout correct branch for my_middle_API submodule
       run: |
         cd my_middle_API
-        git fetch origin test-user-profile-endpoint
-        git checkout test-user-profile-endpoint
-        git pull origin test-user-profile-endpoint
+        git fetch origin Auth_test
+        git checkout Auth_test
+        git pull origin Auth_test
         cd ..
 
     - name: Set up Python ${{ matrix.python-version }}
@@ -65,7 +65,7 @@ jobs:
           set -x
           set -e
 
-          echo "Starting deployment for test-user-profile-endpoint branch..."
+          echo "Starting deployment for Auth_test branch..."
 
           cd ../../../../..
           if [ -d "s_locator" ]; then
@@ -89,8 +89,8 @@ jobs:
           cd ..
 
           cd my_middle_API
-          git checkout test-user-profile-endpoint
-          git pull origin test-user-profile-endpoint
+          git checkout Auth_test
+          git pull origin Auth_test
           cd ..
 
           mkdir -p my_middle_API/secrets
@@ -129,4 +129,4 @@ jobs:
             gsutil -m cp -r gs://s-locator/misc/population_json_files dist/data/population_json_files/
           "
 
-          echo "Deployment for test-user-profile-endpoint branch completed."
+          echo "Deployment for Auth_test branch completed."
